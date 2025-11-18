@@ -715,17 +715,22 @@
               <button type="button" class="btn btn-ghost" id="edit-mode-btn">기록 수정</button>
             </div>
 
-            <div id="edit-tools" style="margin-top:6px; display:none;">
-              <div class="small" style="margin-bottom:2px;">수정할 기록을 선택한 뒤 ‘선택 불러오기’를 누르세요.</div>
-              <div class="row" style="align-items:flex-end;">
-                <div>
-                  <select id="edit-intake-select"></select>
-                </div>
-                <div style="flex:0 0 130px; min-width:115px;">
-                  <button type="button" class="btn btn-outline" id="load-intake-btn">선택 불러오기</button>
-                </div>
-              </div>
-            </div>
+<div id="edit-tools" style="margin-top:6px; display:none;">
+  <div class="small" style="margin-bottom:2px;">수정하거나 삭제할 기록을 선택한 뒤 버튼을 누르세요.</div>
+  <div class="row" style="align-items:flex-end;">
+    <div>
+      <select id="edit-intake-select"></select>
+    </div>
+    <div style="flex:0 0 130px; min-width:115px;">
+      <button type="button" class="btn btn-outline" id="load-intake-btn">선택 불러오기</button>
+    </div>
+    <!-- ✅ 추가: 선택 기록 삭제 버튼 -->
+    <div style="flex:0 0 130px; min-width:115px;">
+      <button type="button" class="btn btn-ghost" id="delete-intake-btn">선택 기록 삭제</button>
+    </div>
+  </div>
+</div>
+
           </form>
 
 
@@ -2175,6 +2180,51 @@ document.addEventListener('change', function(e) {
       if (cupText) cupText.textContent = '선택한 기록을 수정한 뒤 “수정 내용 저장”을 누르면 반영됩니다.';
       return;
     }
+    // ✅ 선택한 섭취 기록 삭제
+    if (e.target.id === 'delete-intake-btn') {
+      const sel = document.getElementById('edit-intake-select');
+      if (!sel || !sel.value) {
+        alert('삭제할 기록이 없습니다.');
+        return;
+      }
+
+      const id = sel.value;
+      const idx = intakes.findIndex(i => String(i.id) === id);
+
+      if (idx === -1) {
+        alert('선택한 기록을 찾을 수 없습니다.');
+        return;
+      }
+
+      if (!confirm('정말 이 기록을 삭제할까요? 삭제 후에는 되돌릴 수 없습니다.')) {
+        return;
+      }
+
+      const deleted = intakes.splice(idx, 1)[0];
+
+      // 만약 방금 삭제한 것이 현재 수정 중이던 기록이면, 수정 상태 초기화
+      if (currentEditId !== null && String(currentEditId) === String(deleted.id)) {
+        currentEditId = null;
+        const submitBtn = document.getElementById('submit-intake-btn');
+        if (submitBtn) submitBtn.textContent = '기록 저장';
+        const form = document.getElementById('intake-form');
+        if (form) form.reset();
+        const intakeTime = document.getElementById('intake-time');
+        if (intakeTime) intakeTime.value = formatDateTimeLocal(new Date());
+      }
+
+      // 저장 + 화면 갱신
+      saveData();
+      updateTodaySummary();
+      updateStats();
+      updateCaffeineGraph();
+      updateEditSelect();   // 드롭다운 목록 갱신
+      renderStatsDetail();  // 세부 그래프도 사용 중이면 갱신
+      renderBloodDetail();  // 혈중 농도 세부 그래프 갱신
+
+      alert('선택한 섭취 기록이 삭제되었습니다.');
+      return;
+    }
 
     if (e.target.closest && e.target.closest('.drag-hint')) {
       showExtraCombined();
@@ -2315,11 +2365,11 @@ document.addEventListener('submit', function(e) {
   }
 });
 
+  // 📊 통계 메인 / 세부 차트
   let statsChart = null;
-  // 📊 세부 화면(오늘/7일/월/연)용 차트들 저장용
   let statsDetailCharts = {};
 
-  // 기간별 라벨/데이터/텍스트를 한 번에 만들어 주는 공통 유틸
+  // 기간별 라벨/데이터/텍스트 + 또래 평균(동일 나이) 계산
   function getStatsData(period) {
     const now = new Date();
     let labels = [];
@@ -2386,13 +2436,12 @@ document.addEventListener('submit', function(e) {
 
     const total = data.reduce((a, b) => a + b, 0);
     const avg = data.length ? total / data.length : 0;
-    const { weightData, ageData } = buildPeerDataPair(period, labels);
+    const { ageData } = buildPeerDataPair(period, labels);  // 동일 나이 평균만 사용
 
-return { now, labels, data, explain, extra, total, avg, ageData };
-
+    return { now, labels, data, explain, extra, total, avg, ageData };
   }
 
-
+  // 또래(동일 나이) 평균 시계열 만들기
   function buildPeerDataPair(period, labels) {
     // 26명 데이터 (총 mg / 시간대)
     const peerRaw = [
@@ -2446,7 +2495,7 @@ return { now, labels, data, explain, extra, total, avg, ageData };
       if(hourCnt[h]>0) hourAvg[h] = hourAvg[h] / hourCnt[h];
     }
 
-    // period별 레이블에 맞춰 평균 출력
+    // period별 라벨에 맞춰 평균 출력 (지금은 시간대 label에서만 사용)
     const ageData = labels.map(label=>{
       if(label.includes("시")){
         const h = parseInt(label.replace("시",""));
@@ -2458,6 +2507,7 @@ return { now, labels, data, explain, extra, total, avg, ageData };
     return { ageData };
   }
 
+  // 📊 메인 통계 패널 업데이트
   function updateStats() {
     const select = document.getElementById('period-select');
     if (!select) return;
@@ -2471,16 +2521,15 @@ return { now, labels, data, explain, extra, total, avg, ageData };
       extra,
       total,
       avg,
-      weightData,
       ageData
     } = getStatsData(period);
 
     const textDiv = document.getElementById('stats-text');
     if (textDiv) {
-    textDiv.innerHTML =
-  `총 섭취량: <b>${total.toFixed(0)} mg</b>, 평균: <b>${avg.toFixed(1)} mg</b>${extra}` +
-  `<br>${explain}` +
-  `<br>연한 녹색 막대는 <b>나의 섭취량</b>, 점선 회색 실선은 <b>동일 나이 평균</b>의 값입니다.`;
+      textDiv.innerHTML =
+        `총 섭취량: <b>${total.toFixed(0)} mg</b>, 평균: <b>${avg.toFixed(1)} mg</b>${extra}` +
+        `<br>${explain}` +
+        `<br>연한 녹색 막대는 <b>나의 섭취량</b>, 점선 회색 실선은 <b>동일 나이 평균</b>의 값입니다.`;
     }
 
     const canvas = document.getElementById('stats-chart');
@@ -2500,7 +2549,7 @@ return { now, labels, data, explain, extra, total, avg, ageData };
                 borderColor: 'rgba(156,163,175,0.95)',
                 backgroundColor: 'rgba(156,163,175,0.03)',
                 borderWidth: 2,
-                borderDash: [6, 4],
+                borderDash: [2, 3],
                 pointRadius: 0,
                 order: 1
               },
@@ -2523,18 +2572,17 @@ return { now, labels, data, explain, extra, total, avg, ageData };
         });
       } else {
         statsChart.data.labels = labels;
-        statsChart.data.datasets[0].data = weightData;
-        statsChart.data.datasets[1].data = ageData;
-        statsChart.data.datasets[2].data = data;
+        statsChart.data.datasets[0].data = ageData;
+        statsChart.data.datasets[1].data = data;
         statsChart.update();
       }
-    }
 
-    // 월간 캘린더는 기존처럼 유지 (month일 때만 data 넘기기)
-    renderMonthCalendar(now, period === 'month' ? data : []);
+      // 월간 캘린더는 month일 때만 데이터 전달
+      renderMonthCalendar(now, period === 'month' ? data : []);
+    }
   }
 
-  // 📊 통계 전체 화면(세부 모드)에서 4개 기간 그래프를 한 번에 렌더링
+  // 📊 통계 전체 화면(세부 모드)에서 4개 기간 그래프 렌더링
   function renderStatsDetail() {
     const wrapper = document.getElementById('stats-detail-wrapper');
     if (!wrapper || wrapper.style.display === 'none') return;
@@ -2558,7 +2606,6 @@ return { now, labels, data, explain, extra, total, avg, ageData };
         extra,
         total,
         avg,
-        weightData,
         ageData
       } = getStatsData(cfg.period);
 
@@ -2603,7 +2650,7 @@ return { now, labels, data, explain, extra, total, avg, ageData };
             maintainAspectRatio: false,
             scales: { y: { beginAtZero: true } },
             plugins: {
-              legend: { display: false } // 세부 화면에서는 범례 감추기 (공간 절약)
+              legend: { display: false } // 세부 화면에서는 범례 감추기
             }
           }
         });
@@ -2611,55 +2658,160 @@ return { now, labels, data, explain, extra, total, avg, ageData };
         // 이미 있는 차트 업데이트
         const chart = statsDetailCharts[cfg.period];
         chart.data.labels = labels;
-        chart.data.datasets[0].data = weightData;
-        chart.data.datasets[1].data = ageData;
-        chart.data.datasets[2].data = data;
+        chart.data.datasets[0].data = ageData;
+        chart.data.datasets[1].data = data;
         chart.update();
       }
     });
   }
 
+  // 📊 월간 캘린더 + 날짜 클릭 시 하루 그래프 표시
   function renderMonthCalendar(now, dataForMonth) {
     const cal = document.getElementById('month-calendar');
     if (!cal) return;
+
     const y = now.getFullYear();
     const m = now.getMonth();
-    const lastDay = new Date(y,m+1,0).getDate();
-    const firstWeekday = new Date(y,m,1).getDay();
+    const lastDay = new Date(y, m + 1, 0).getDate();
+    const firstWeekday = new Date(y, m, 1).getDay();
     const weekdays = ['일','월','화','수','목','금','토'];
 
+    // 월별 섭취 데이터 준비
     let data = dataForMonth;
-    if (data.length !== lastDay) {
+    if (!Array.isArray(data) || data.length !== lastDay) {
       data = new Array(lastDay).fill(0);
-      intakes.forEach(i=>{
+      intakes.forEach(i => {
         const d = new Date(i.takenAt);
-        if (d.getFullYear()===y && d.getMonth()===m) data[d.getDate()-1]+=i.caffeineMg;
+        if (d.getFullYear() === y && d.getMonth() === m) {
+          data[d.getDate() - 1] += i.caffeineMg;
+        }
       });
     }
     const maxVal = data.length ? Math.max(...data) : 0;
 
+    // 캘린더 HTML 생성
     let html = '<div class="calendar-grid">';
-    weekdays.forEach(w=>{
+    weekdays.forEach(w => {
       html += `<div class="calendar-day-header">${w}</div>`;
     });
-    for (let i=0;i<firstWeekday;i++) html += '<div class="calendar-day"></div>';
 
-    for (let day=1; day<=lastDay; day++) {
-      const idx = day-1;
+    // 1일 시작 전 빈 칸
+    for (let i = 0; i < firstWeekday; i++) {
+      html += '<div class="calendar-day"></div>';
+    }
+
+    // 날짜 칸
+    for (let day = 1; day <= lastDay; day++) {
+      const idx = day - 1;
       const val = data[idx] || 0;
+
       let bg = '#e5f7ef';
-      if (maxVal>0 && val>0) {
-        const ratio = val/maxVal;
-        const light = 90 - Math.round(35*ratio);
+      if (maxVal > 0 && val > 0) {
+        const ratio = val / maxVal;
+        const light = 90 - Math.round(35 * ratio); // 값이 클수록 더 진하게
         bg = `hsl(140,60%,${light}%)`;
       }
-      const has = val>0;
-      html += `<div class="calendar-day${has?' has-intake':''}" style="background:${bg};">${day}</div>`;
+      const has = val > 0;
+
+      // data-day + cursor:pointer 추가 (클릭 가능 표시)
+      html += `<div class="calendar-day${has ? ' has-intake' : ''}"
+                   data-day="${day}"
+                   style="background:${bg}; cursor:pointer;">
+                 ${day}
+               </div>`;
     }
+
     html += '</div><div class="calendar-legend">숫자와 색이 진할수록 해당 날짜의 카페인 섭취량이 많습니다.</div>';
     cal.innerHTML = html;
+
+    // 📅 날짜 클릭 시 해당 날짜의 하루 카페인 섭취 그래프 표시
+    const dayCells = cal.querySelectorAll('.calendar-day[data-day]');
+    dayCells.forEach(cell => {
+      cell.addEventListener('click', () => {
+        const day = parseInt(cell.getAttribute('data-day'), 10);
+        renderDailyStatsForDate(y, m, day);
+      });
+    });
   }
 
+  // 📊 선택한 날짜의 하루(0~23시) 카페인 섭취량 그래프
+  function renderDailyStatsForDate(year, monthIndex, day) {
+    const labels = Array.from({ length: 24 }, (_, i) => `${i}시`);
+    const data   = new Array(24).fill(0);
+
+    // 해당 날짜의 기록을 시간대별로 합산
+    intakes.forEach(i => {
+      const d = new Date(i.takenAt);
+      if (
+        d.getFullYear() === year &&
+        d.getMonth() === monthIndex &&
+        d.getDate() === day
+      ) {
+        data[d.getHours()] += i.caffeineMg;
+      }
+    });
+
+    const total = data.reduce((a, b) => a + b, 0);
+    const avg   = data.length ? total / data.length : 0;
+
+    // 텍스트 영역 업데이트
+    const textDiv = document.getElementById('stats-text');
+    if (textDiv) {
+      const mm = String(monthIndex + 1).padStart(2, '0');
+      const dd = String(day).padStart(2, '0');
+      textDiv.innerHTML =
+        `선택한 날짜: <b>${year}-${mm}-${dd}</b>` +
+        `<br>총 섭취량: <b>${total.toFixed(0)} mg</b>, 시간대 평균: <b>${avg.toFixed(1)} mg</b>` +
+        `<br>막대를 통해 어느 시간대에 많이 섭취했는지 확인해 보세요.`;
+    }
+
+    const canvas = document.getElementById('stats-chart');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+
+    // 통계용 메인 차트 재사용 (없으면 새로 생성)
+    if (!statsChart) {
+      statsChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels,
+          datasets: [
+            {
+              label: '시간대별 섭취량 (mg)',
+              data,
+              backgroundColor: 'rgba(34,197,94,0.45)',
+              borderColor: 'rgba(22,163,74,0.95)',
+              borderWidth: 1
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          scales: { y: { beginAtZero: true } }
+        }
+      });
+      return;
+    }
+
+    // 기존 statsChart 데이터만 교체
+    statsChart.data.labels = labels;
+    const ds = statsChart.data.datasets;
+
+    if (ds.length >= 2) {
+      // 0: 동일 나이 평균, 1: 내 섭취량 막대
+      ds[0].data = new Array(24).fill(null); // 라인 숨기기
+      ds[1].label = '시간대별 섭취량 (mg)';
+      ds[1].data  = data;
+    } else if (ds.length >= 1) {
+      ds[0].label = '시간대별 섭취량 (mg)';
+      ds[0].data  = data;
+    }
+
+    statsChart.update();
+  }
+
+  // 🔽 아래 세 줄은 원래 있던 값 유지 (혈중 농도 그래프용)
   let caffeineChart = null;
   let caffeineWeekChart  = null;
   let caffeineMonthChart = null;
